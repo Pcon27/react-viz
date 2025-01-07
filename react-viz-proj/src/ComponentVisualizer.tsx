@@ -16,15 +16,18 @@ const ComponentVisualizer = () => {
     const edges: any[] = [];
     const hierarchy: Record<string, number> = {};
 
-    const traverse = (node: any, parent: string | null = null, depth = 0) => {
+    const traverse = (
+      node: any,
+      currentParent: string | null = null,
+      depth = 0
+    ) => {
       if (!node) return;
 
       // Detect top-level components
       if (
         (node.type === "FunctionDeclaration" ||
           node.type === "ClassDeclaration") &&
-        node.id &&
-        !parent
+        node.id
       ) {
         components[node.id.name] = {
           id: node.id.name,
@@ -32,14 +35,16 @@ const ComponentVisualizer = () => {
           props: [],
         };
         hierarchy[node.id.name] = depth;
+
+        // This component becomes the parent for its JSX children
+        currentParent = node.id.name;
       }
 
       // Detect arrow function components
       if (
         node.type === "VariableDeclaration" &&
         node.declarations[0]?.init?.type === "ArrowFunctionExpression" &&
-        node.declarations[0]?.id &&
-        !parent
+        node.declarations[0]?.id
       ) {
         const componentName = node.declarations[0].id.name;
         components[componentName] = {
@@ -48,6 +53,9 @@ const ComponentVisualizer = () => {
           props: [],
         };
         hierarchy[componentName] = depth;
+
+        // This component becomes the parent for its JSX children
+        currentParent = componentName;
       }
 
       // Detect imported components
@@ -64,32 +72,52 @@ const ComponentVisualizer = () => {
       }
 
       // Handle JSX elements (child components and props)
-      if (node.type === "JSXElement" && parent) {
+      if (node.type === "JSXElement") {
         const componentName = node.openingElement.name.name;
-        if (components[componentName]) {
+
+        // Only create edges if the parent exists
+        if (currentParent && components[componentName]) {
           edges.push({
-            id: `${parent}-${componentName}`,
-            source: parent,
+            id: `${currentParent}-${componentName}`,
+            source: currentParent,
             target: componentName,
           });
-          hierarchy[componentName] = depth + 1;
 
-          // Extract props from the JSX element
-          const props = node.openingElement.attributes
-            .map((attr: any) => attr.name?.name)
-            .filter(Boolean);
+          // Increment depth for the child component
+          hierarchy[componentName] = depth + 1;
+        }
+
+        // Extract props from the JSX element
+        const props = node.openingElement.attributes
+          .map((attr: any) => attr.name?.name)
+          .filter(Boolean);
+        if (components[componentName]) {
           components[componentName].props.push(...props);
         }
+
+        // Update the parent for this JSXElement's children
+        const newParent = components[componentName]
+          ? componentName
+          : currentParent;
+
+        // Traverse children with the new parent
+        for (const key in node) {
+          if (Array.isArray(node[key])) {
+            node[key].forEach((child) => traverse(child, newParent, depth + 1));
+          } else if (typeof node[key] === "object") {
+            traverse(node[key], newParent, depth + 1);
+          }
+        }
+
+        return; // End processing for this JSXElement
       }
 
-      // Recursively traverse children
+      // Traverse other nodes without updating the parent
       for (const key in node) {
         if (Array.isArray(node[key])) {
-          node[key].forEach((child) =>
-            traverse(child, node.id?.name || parent, depth + 1)
-          );
+          node[key].forEach((child) => traverse(child, currentParent, depth));
         } else if (typeof node[key] === "object") {
-          traverse(node[key], node.id?.name || parent, depth + 1);
+          traverse(node[key], currentParent, depth);
         }
       }
     };
@@ -112,7 +140,7 @@ const ComponentVisualizer = () => {
     });
 
     const nodeSpacing = 200;
-    const depthSpacing = 150;
+    const depthSpacing = 80;
 
     setNodes(
       Object.keys(components).map((key) => {
@@ -137,7 +165,6 @@ const ComponentVisualizer = () => {
             x: index * nodeSpacing, // Horizontal spacing
             y: depth * depthSpacing, // Vertical spacing
           },
-          type: "tooltip",
         };
       })
     );
